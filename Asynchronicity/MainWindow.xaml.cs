@@ -21,11 +21,12 @@ namespace Asynchronicity
     public partial class MainWindow : Window, INotifyPropertyChanged
   {
     private Channel<DataItem> _channel;
-    private CancellationTokenSource _cts;
+    private CancellationTokenSource _producersCts;
     private readonly object _lock = new();
 
     private Dictionary<string, int> _consumerCounts = new();
     private Dictionary<string, ColumnSeries> _consumerSeries = new();
+    private Dictionary<string, CancellationTokenSource> _consumerCancellationTokens = new();
     private int _nextConsumerId = 1; 
 
     private int _produced, _consumed, _errors;
@@ -33,8 +34,10 @@ namespace Asynchronicity
 
     private ColumnSeries _producedSeries;
 
-    public SeriesCollection SeriesCollection { get; set; }
-    public List<string> Labels { get; set; }
+    public SeriesCollection SeriesCollectionConsumers { get; set; }
+    public SeriesCollection SeriesCollectionProducers { get; set; }
+    public List<string> LabelsProducers { get; set; }
+    public List<string> LabelsConsumers { get; set; }
 
     public string ProducedText => $"Wyprodukowane: {_produced}";
     public string ConsumedText => $"Skonsumowane: {_consumed}";
@@ -50,7 +53,8 @@ namespace Asynchronicity
       InitializeComponent();
       DataContext = this;
 
-      Labels = new List<string> { "Wyprodukowane" };
+      LabelsProducers = new List<string> { "Wyprodukowane" };
+      LabelsConsumers = new List<string>();
 
       _producedSeries = new ColumnSeries
       {
@@ -58,47 +62,49 @@ namespace Asynchronicity
         Values = new ChartValues<int> { 0 }
       };
 
-      SeriesCollection = new SeriesCollection
+      SeriesCollectionProducers = new SeriesCollection
       {
           _producedSeries
       };
+      SeriesCollectionConsumers = new SeriesCollection();
     }
 
     private void Start_Click(object sender, RoutedEventArgs e)
     {
       //nie określamy liczby konsumentów i producentów. Liczba konsumentów i producentów jest nieograniczona
       _channel = Channel.CreateUnbounded<DataItem>(); 
-      _cts = new CancellationTokenSource();
-
+      _producersCts = new CancellationTokenSource();
+      
       _produced = _consumed = _errors = 0;
       _totalWaitTicks = 0;
       UpdateChart();
       NotifyStats();
 
-      Task.Run(() => Producer("P1", _cts.Token));
-      Task.Run(() => Producer("P2", _cts.Token));
-
-
+      Task.Run(() => Producer("P1", _producersCts.Token));
+      Task.Run(() => Producer("P2", _producersCts.Token));
 
       for (int i = 0; i < 3; i++)
       {
         AddConsumer();
       }
-
     }
 
     private void Stop_Click(object sender, RoutedEventArgs e)
     {
       try
       {
-        _cts.Cancel();
+        _producersCts.Cancel();
         _channel.Writer.Complete();
+        foreach(var token in _consumerCancellationTokens)
+        {
+          token.Value.Cancel();
+        }
       }
       catch (Exception) { }
     }
     private void AddConsumer_Click(object sender, RoutedEventArgs e)
     {
-      if (_cts != null && !_cts.IsCancellationRequested)
+      if (_producersCts != null && !_producersCts.IsCancellationRequested)
       {
         AddConsumer();
       }
@@ -106,10 +112,7 @@ namespace Asynchronicity
 
     private void StopConsumer_Click(object sender, RoutedEventArgs e)
     {
-      if (_cts != null && !_cts.IsCancellationRequested)
-      {
-        AddConsumer();
-      }
+      StopLastConsumer();
     }
 
     private async Task Producer(string name, CancellationToken token)
@@ -175,22 +178,33 @@ namespace Asynchronicity
       var series = new ColumnSeries
       {
         Title = name,
+        Name = name,
         Values = new ChartValues<int> { 0 }
       };
 
       _consumerSeries[name] = series;
-      SeriesCollection.Add(series);
-      Labels.Add(name);
+      SeriesCollectionConsumers.Add(series);
+      LabelsConsumers.Add(name);
+
+      var cts = new CancellationTokenSource();
+      _consumerCancellationTokens[name] = cts;
 
       // Odśwież wykres
       OnPropertyChanged(nameof(SeriesCollection));
 
-      Task.Run(() => Consumer(name, _cts.Token));
+      Task.Run(() => Consumer(name, cts.Token));
     }
 
-    private void StopConsumer()
+    private void StopLastConsumer()
     {
-      var consumer = SeriesCollection.LastOrDefault();
+      var lastConsumerCts = _consumerCancellationTokens.LastOrDefault();
+      if(lastConsumerCts.Value == null)
+      {
+        return;
+      }
+      lastConsumerCts.Value.Cancel();
+      _consumerCancellationTokens.Remove(lastConsumerCts.Key);
+
     }
 
     private void UpdateChart()
