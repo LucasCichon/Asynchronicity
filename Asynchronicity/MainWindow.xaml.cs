@@ -24,10 +24,14 @@ namespace Asynchronicity
     private CancellationTokenSource _cts;
     private readonly object _lock = new();
 
+    private Dictionary<string, int> _consumerCounts = new();
+    private Dictionary<string, ColumnSeries> _consumerSeries = new();
+    private int _nextConsumerId = 1; 
+
     private int _produced, _consumed, _errors;
     private long _totalWaitTicks;
 
-    private ColumnSeriesWithCount _producedSeries;
+    private ColumnSeries _producedSeries;
 
     public SeriesCollection SeriesCollection { get; set; }
     public List<string> Labels { get; set; }
@@ -37,9 +41,6 @@ namespace Asynchronicity
     public string ErrorText => $"Błędy: {_errors}";
     public string AvgWaitText => $"Średni czas w kolejce: {TimeSpan.FromTicks(_consumed > 0 ? _totalWaitTicks / _consumed : 0):g}";
 
-    private Dictionary<string, int> _consumerCounts = new();
-    private Dictionary<string, ColumnSeries> _consumerSeries = new();
-    private int _nextConsumerId = 1; // For naming like C1, C2...
 
     public event PropertyChangedEventHandler PropertyChanged;
 
@@ -49,9 +50,9 @@ namespace Asynchronicity
       InitializeComponent();
       DataContext = this;
 
-      Labels = new List<string> { "Wyprodukowane", "C1", "C2", "C3" };
+      Labels = new List<string> { "Wyprodukowane" };
 
-      _producedSeries = new ColumnSeriesWithCount
+      _producedSeries = new ColumnSeries
       {
         Title = "Wyprodukowane",
         Values = new ChartValues<int> { 0 }
@@ -103,6 +104,14 @@ namespace Asynchronicity
       }
     }
 
+    private void StopConsumer_Click(object sender, RoutedEventArgs e)
+    {
+      if (_cts != null && !_cts.IsCancellationRequested)
+      {
+        AddConsumer();
+      }
+    }
+
     private async Task Producer(string name, CancellationToken token)
     {
       var rnd = new Random();
@@ -135,6 +144,7 @@ namespace Asynchronicity
         await foreach (var item in _channel.Reader.ReadAllAsync(token))
         {
           var wait = DateTime.UtcNow - item.CreatedAt;
+          //symulacja wykonania zadania
           await Task.Delay(500 + rnd.Next(0, 300), token);
 
           lock (_lock)
@@ -142,6 +152,7 @@ namespace Asynchronicity
             _consumed++;
             _totalWaitTicks += wait.Ticks;
 
+            //symulacja błędu
             if (rnd.NextDouble() < 0.1)
               _errors++;
 
@@ -175,6 +186,11 @@ namespace Asynchronicity
       OnPropertyChanged(nameof(SeriesCollection));
 
       Task.Run(() => Consumer(name, _cts.Token));
+    }
+
+    private void StopConsumer()
+    {
+      var consumer = SeriesCollection.LastOrDefault();
     }
 
     private void UpdateChart()

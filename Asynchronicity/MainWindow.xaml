@@ -14,6 +14,7 @@
             <Button Content="Start" Width="100" Margin="5" Click="Start_Click"/>
             <Button Content="Stop" Width="100" Margin="5" Click="Stop_Click"/>
             <Button Content="AddConsumer" Width="100" Margin="5" Click="AddConsumer_Click"/>
+            <Button Content="StopConsumer" Width="100" Margin="5" Click="StopConsumer_Click"/>
         </StackPanel>
 
         <lvc:CartesianChart Grid.Row="1" Margin="0,10" Series="{Binding SeriesCollection}">
