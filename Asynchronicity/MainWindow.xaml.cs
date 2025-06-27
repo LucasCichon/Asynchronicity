@@ -74,12 +74,15 @@ namespace Asynchronicity
 
       for(int i = 0; i < 2; i++)
       {
-        AddProducer();
+
+        AddWorker(WorkerType.Producer, ref _nextProducerId, _producerCounts, _producersSeries,
+                  SeriesCollectionProducers, LabelsProducers, _producersCts, Producer); 
       }
 
       for (int i = 0; i < 3; i++)
       {
-        AddConsumer();
+        AddWorker(WorkerType.Consumer, ref _nextConsumerId, _consumerCounts, _consumersSeries,
+          SeriesCollectionConsumers, LabelsConsumers, _consumersCts, Consumer);
       }
 
       UpdateChart();
@@ -104,22 +107,25 @@ namespace Asynchronicity
     }
     private void AddConsumer_Click(object sender, RoutedEventArgs e)
     {
-      AddConsumer();
+      AddWorker(WorkerType.Consumer, ref _nextConsumerId, _consumerCounts, _consumersSeries,
+          SeriesCollectionConsumers, LabelsConsumers, _consumersCts, Consumer);
     }
 
     private void StopConsumer_Click(object sender, RoutedEventArgs e)
     {
-      StopLastConsumer();
+      StopLastWorker(_consumersCts);
     }
 
     private void AddProducer_Click(object sender, RoutedEventArgs e)
     {
-      AddProducer();
+
+      AddWorker(WorkerType.Producer, ref _nextProducerId, _producerCounts, _producersSeries,
+                SeriesCollectionProducers, LabelsProducers, _producersCts, Producer);
     }
 
     private void StopProducer_Click(object sender, RoutedEventArgs e)
     {
-      StopLastProducer();
+      StopLastWorker(_producersCts);
     }
 
     private async Task Producer(string name, CancellationToken token)
@@ -179,10 +185,18 @@ namespace Asynchronicity
       catch (OperationCanceledException) { }
     }
 
-    private void AddConsumer()
+    private void AddWorker(
+     WorkerType workerType,
+     ref int nextId,
+     Dictionary<string, int> countDict,
+     Dictionary<string, ColumnSeries> seriesDict,
+     SeriesCollection seriesCollection,
+     List<string> labels,
+     Dictionary<string, CancellationTokenSource> ctsDict,
+     Func<string, CancellationToken, Task> workerFunc)
     {
-      string name = $"C{_nextConsumerId++}";
-      _consumerCounts[name] = 0;
+      string name = $"{GetWorkerPrefix(workerType)}{nextId++}";
+      countDict[name] = 0;
 
       var series = new ColumnSeries
       {
@@ -190,62 +204,34 @@ namespace Asynchronicity
         Values = new ChartValues<int> { 0 }
       };
 
-      _consumersSeries[name] = series;
-      SeriesCollectionConsumers.Add(series);
-      LabelsConsumers.Add(name);
+      seriesDict[name] = series;
+      seriesCollection.Add(series);
+      labels.Add(name);
 
       var cts = new CancellationTokenSource();
-      _consumersCts[name] = cts;
+      ctsDict[name] = cts;
 
-      // Odśwież wykres
-      OnPropertyChanged(nameof(SeriesCollection));
-
-      Task.Run(() => Consumer(name, cts.Token));
+      Task.Run(() => workerFunc(name, cts.Token));
     }
 
-    private void AddProducer()
+    private string GetWorkerPrefix(WorkerType workerType)
     {
-      string name = $"P{_nextProducerId++}";
-      _producerCounts[name] = 0;
-
-      var series = new ColumnSeries
+      return workerType switch
       {
-        Title = name,
-        Values = new ChartValues<int> { 0 }
-      };
-
-      _producersSeries[name] = series;
-      SeriesCollectionProducers.Add(series);
-      LabelsProducers.Add(name);
-
-      var cts = new CancellationTokenSource();
-      _producersCts[name] = cts;
-
-      OnPropertyChanged(nameof (SeriesCollection));
-
-      Task.Run(() => Producer(name, cts.Token));      
+        WorkerType.Consumer => "C",
+        WorkerType.Producer => "P",
+        _ => throw new Exception($"WorkerType {workerType} not found!")
+      };        
     }
 
-    private void StopLastConsumer()
+    private void StopLastWorker(Dictionary<string, CancellationTokenSource> ctsDict)
     {
-      var lastConsumerCts = _consumersCts.LastOrDefault();
-      if(lastConsumerCts.Value == null)
-      {
+      var last = ctsDict.LastOrDefault();
+      if (last.Value == null)
         return;
-      }
-      lastConsumerCts.Value.Cancel();
-      _consumersCts.Remove(lastConsumerCts.Key);
-    }
 
-    private void StopLastProducer()
-    {
-      var lastProducerCts = _producersCts.LastOrDefault();
-      if (lastProducerCts.Value == null)
-      {
-        return;
-      }
-      lastProducerCts.Value.Cancel();
-      _producersCts.Remove(lastProducerCts.Key);
+      last.Value.Cancel();
+      ctsDict.Remove(last.Key);
     }
 
     private void UpdateChart()
@@ -256,18 +242,18 @@ namespace Asynchronicity
       }
       Application.Current.Dispatcher.Invoke(() =>
       {
-        foreach(var kvp in _producersSeries)
-        {
-          string name = kvp.Key;
-          kvp.Value.Values[0] = _producerCounts.TryGetValue(name, out var count) ? count : 0;
-        }
-
-        foreach (var kvp in _consumersSeries)
-        {
-          string name = kvp.Key;
-          kvp.Value.Values[0] = _consumerCounts.TryGetValue(name, out var count) ? count : 0;
-        }
+        UpdateSeries(_producersSeries, _producerCounts);
+        UpdateSeries(_consumersSeries, _consumerCounts);
       });
+    }
+
+    private void UpdateSeries(Dictionary<string, ColumnSeries> seriesDict, Dictionary<string, int> countDict)
+    {
+      foreach (var kvp in seriesDict)
+      {
+        string name = kvp.Key;
+        kvp.Value.Values[0] = countDict.TryGetValue(name, out var count) ? count : 0;
+      }
     }
 
     private void NotifyStats()
