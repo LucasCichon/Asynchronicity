@@ -21,18 +21,23 @@ namespace Asynchronicity
     public partial class MainWindow : Window, INotifyPropertyChanged
   {
     private Channel<DataItem> _channel;
-    private CancellationTokenSource _producersCts;
+    //private CancellationTokenSource _producersCts;
     private readonly object _lock = new();
 
     private Dictionary<string, int> _consumerCounts = new();
-    private Dictionary<string, ColumnSeries> _consumerSeries = new();
-    private Dictionary<string, CancellationTokenSource> _consumerCancellationTokens = new();
-    private int _nextConsumerId = 1; 
+    private Dictionary<string, int> _producerCounts = new();
+    private Dictionary<string, ColumnSeries> _consumersSeries = new();
+    private Dictionary<string, ColumnSeries> _producersSeries = new();
+    private Dictionary<string, CancellationTokenSource> _consumersCts = new();
+    private Dictionary<string, CancellationTokenSource> _producersCts = new();
+
+    private int _nextProducerId = 1;
+    private int _nextConsumerId = 1;
 
     private int _produced, _consumed, _errors;
     private long _totalWaitTicks;
 
-    private ColumnSeries _producedSeries;
+    //private ColumnSeries _producedSeries;
 
     public SeriesCollection SeriesCollectionConsumers { get; set; }
     public SeriesCollection SeriesCollectionProducers { get; set; }
@@ -53,49 +58,44 @@ namespace Asynchronicity
       InitializeComponent();
       DataContext = this;
 
-      LabelsProducers = new List<string> { "Wyprodukowane" };
+      LabelsProducers = new List<string> ();
       LabelsConsumers = new List<string>();
-
-      _producedSeries = new ColumnSeries
-      {
-        Title = "Wyprodukowane",
-        Values = new ChartValues<int> { 0 }
-      };
-
-      SeriesCollectionProducers = new SeriesCollection
-      {
-          _producedSeries
-      };
       SeriesCollectionConsumers = new SeriesCollection();
+      SeriesCollectionProducers = new SeriesCollection();
     }
 
     private void Start_Click(object sender, RoutedEventArgs e)
     {
       //nie określamy liczby konsumentów i producentów. Liczba konsumentów i producentów jest nieograniczona
       _channel = Channel.CreateUnbounded<DataItem>(); 
-      _producersCts = new CancellationTokenSource();
       
       _produced = _consumed = _errors = 0;
       _totalWaitTicks = 0;
-      UpdateChart();
-      NotifyStats();
 
-      Task.Run(() => Producer("P1", _producersCts.Token));
-      Task.Run(() => Producer("P2", _producersCts.Token));
+      for(int i = 0; i < 2; i++)
+      {
+        AddProducer();
+      }
 
       for (int i = 0; i < 3; i++)
       {
         AddConsumer();
       }
+
+      UpdateChart();
+      NotifyStats();
     }
 
     private void Stop_Click(object sender, RoutedEventArgs e)
     {
       try
       {
-        _producersCts.Cancel();
         _channel.Writer.Complete();
-        foreach(var token in _consumerCancellationTokens)
+        foreach(var token in _producersCts)
+        {
+          token.Value.Cancel();
+        }
+        foreach(var token in _consumersCts)
         {
           token.Value.Cancel();
         }
@@ -104,15 +104,22 @@ namespace Asynchronicity
     }
     private void AddConsumer_Click(object sender, RoutedEventArgs e)
     {
-      if (_producersCts != null && !_producersCts.IsCancellationRequested)
-      {
-        AddConsumer();
-      }
+      AddConsumer();
     }
 
     private void StopConsumer_Click(object sender, RoutedEventArgs e)
     {
       StopLastConsumer();
+    }
+
+    private void AddProducer_Click(object sender, RoutedEventArgs e)
+    {
+      AddProducer();
+    }
+
+    private void StopProducer_Click(object sender, RoutedEventArgs e)
+    {
+      StopLastProducer();
     }
 
     private async Task Producer(string name, CancellationToken token)
@@ -129,6 +136,8 @@ namespace Asynchronicity
           lock (_lock)
           {
             _produced++;
+            if (_producerCounts.ContainsKey(name))
+              _producerCounts[name]++;
             UpdateChart();
             NotifyStats();
           }
@@ -178,16 +187,15 @@ namespace Asynchronicity
       var series = new ColumnSeries
       {
         Title = name,
-        Name = name,
         Values = new ChartValues<int> { 0 }
       };
 
-      _consumerSeries[name] = series;
+      _consumersSeries[name] = series;
       SeriesCollectionConsumers.Add(series);
       LabelsConsumers.Add(name);
 
       var cts = new CancellationTokenSource();
-      _consumerCancellationTokens[name] = cts;
+      _consumersCts[name] = cts;
 
       // Odśwież wykres
       OnPropertyChanged(nameof(SeriesCollection));
@@ -195,16 +203,49 @@ namespace Asynchronicity
       Task.Run(() => Consumer(name, cts.Token));
     }
 
+    private void AddProducer()
+    {
+      string name = $"P{_nextProducerId++}";
+      _producerCounts[name] = 0;
+
+      var series = new ColumnSeries
+      {
+        Title = name,
+        Values = new ChartValues<int> { 0 }
+      };
+
+      _producersSeries[name] = series;
+      SeriesCollectionProducers.Add(series);
+      LabelsProducers.Add(name);
+
+      var cts = new CancellationTokenSource();
+      _producersCts[name] = cts;
+
+      OnPropertyChanged(nameof (SeriesCollection));
+
+      Task.Run(() => Producer(name, cts.Token));      
+    }
+
     private void StopLastConsumer()
     {
-      var lastConsumerCts = _consumerCancellationTokens.LastOrDefault();
+      var lastConsumerCts = _consumersCts.LastOrDefault();
       if(lastConsumerCts.Value == null)
       {
         return;
       }
       lastConsumerCts.Value.Cancel();
-      _consumerCancellationTokens.Remove(lastConsumerCts.Key);
+      _consumersCts.Remove(lastConsumerCts.Key);
+    }
 
+    private void StopLastProducer()
+    {
+      var lastProducerCts = _producersCts.LastOrDefault();
+      if (lastProducerCts.Value == null)
+      {
+        return;
+      }
+      lastProducerCts.Value.Cancel();
+      _producersCts.Remove(lastProducerCts.Key);
     }
 
     private void UpdateChart()
@@ -215,9 +256,13 @@ namespace Asynchronicity
       }
       Application.Current.Dispatcher.Invoke(() =>
       {
-        _producedSeries.Values[0] = _produced;
+        foreach(var kvp in _producersSeries)
+        {
+          string name = kvp.Key;
+          kvp.Value.Values[0] = _producerCounts.TryGetValue(name, out var count) ? count : 0;
+        }
 
-        foreach (var kvp in _consumerSeries)
+        foreach (var kvp in _consumersSeries)
         {
           string name = kvp.Key;
           kvp.Value.Values[0] = _consumerCounts.TryGetValue(name, out var count) ? count : 0;
