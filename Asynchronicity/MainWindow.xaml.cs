@@ -1,17 +1,11 @@
 ﻿using LiveCharts.Wpf;
 using LiveCharts;
 using System.ComponentModel;
-using System.Text;
 using System.Threading.Channels;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using System.Collections.ObjectModel;
+//using System.Windows.Controls;
+
 
 namespace Asynchronicity
 {
@@ -21,7 +15,6 @@ namespace Asynchronicity
     public partial class MainWindow : Window, INotifyPropertyChanged
   {
     private Channel<DataItem> _channel;
-    //private CancellationTokenSource _producersCts;
     private readonly object _lock = new();
 
     private Dictionary<string, int> _consumerCounts = new();
@@ -37,12 +30,10 @@ namespace Asynchronicity
     private int _produced, _consumed, _errors;
     private long _totalWaitTicks;
 
-    //private ColumnSeries _producedSeries;
-
     public SeriesCollection SeriesCollectionConsumers { get; set; }
     public SeriesCollection SeriesCollectionProducers { get; set; }
-    public List<string> LabelsProducers { get; set; }
-    public List<string> LabelsConsumers { get; set; }
+    public ObservableCollection<string> LabelsProducers { get; set; }
+    public ObservableCollection<string> LabelsConsumers { get; set; }
 
     public string ProducedText => $"Wyprodukowane: {_produced}";
     public string ConsumedText => $"Skonsumowane: {_consumed}";
@@ -58,17 +49,15 @@ namespace Asynchronicity
       InitializeComponent();
       DataContext = this;
 
-      LabelsProducers = new List<string> ();
-      LabelsConsumers = new List<string>();
+      LabelsProducers = new ObservableCollection<string>();
+      LabelsConsumers = new ObservableCollection<string>();
       SeriesCollectionConsumers = new SeriesCollection();
       SeriesCollectionProducers = new SeriesCollection();
     }
 
     private void Start_Click(object sender, RoutedEventArgs e)
     {
-      //nie określamy liczby konsumentów i producentów. Liczba konsumentów i producentów jest nieograniczona
       _channel = Channel.CreateUnbounded<DataItem>(); 
-      
       _produced = _consumed = _errors = 0;
       _totalWaitTicks = 0;
 
@@ -93,6 +82,10 @@ namespace Asynchronicity
     {
       try
       {
+        if(_channel == null)
+        {
+          return;
+        }
         _channel.Writer.Complete();
         foreach(var token in _producersCts)
         {
@@ -130,6 +123,10 @@ namespace Asynchronicity
 
     private async Task Producer(string name, CancellationToken token)
     {
+      if(_channel == null)
+      {
+        return;
+      }
       var rnd = new Random();
       int id = 0;
       try
@@ -156,6 +153,10 @@ namespace Asynchronicity
 
     private async Task Consumer(string name, CancellationToken token)
     {
+      if (_channel == null)
+      {
+        return;
+      }
       var rnd = new Random();
       try
       {
@@ -191,7 +192,7 @@ namespace Asynchronicity
      Dictionary<string, int> countDict,
      Dictionary<string, ColumnSeries> seriesDict,
      SeriesCollection seriesCollection,
-     List<string> labels,
+     ObservableCollection<string> labels,
      Dictionary<string, CancellationTokenSource> ctsDict,
      Func<string, CancellationToken, Task> workerFunc)
     {
@@ -212,6 +213,7 @@ namespace Asynchronicity
       ctsDict[name] = cts;
 
       Task.Run(() => workerFunc(name, cts.Token));
+
     }
 
     private string GetWorkerPrefix(WorkerType workerType)
@@ -258,6 +260,10 @@ namespace Asynchronicity
 
     private void NotifyStats()
     {
+      if(Application.Current == null)
+      {
+        return;
+      }
       Application.Current.Dispatcher.Invoke(() =>
       {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProducedText)));
@@ -269,9 +275,5 @@ namespace Asynchronicity
 
     public record DataItem(int Id, DateTime CreatedAt);
 
-    private void OnPropertyChanged(string name)
-    {
-      PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-    }
   }
 }
